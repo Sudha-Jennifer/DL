@@ -57,6 +57,49 @@ Batch size of 32 or 64 gave the best balance between training speed and accuracy
 Deeper networks (4-5 hidden layers) captured more complex features but required careful tuning.
 
 
+Configuration 1 (Best for Accuracy)
+Hidden Layers: [64, 128, 256]
+Optimizer: Adam
+Learning Rate: 0.001
+Weight Initialization: Xavier
+Activation Function: ReLU
+Batch Size: 32
+Reasoning:
+
+Adam works well with MNIST as it adapts learning rates dynamically.
+Xavier initialization prevents gradients from exploding or vanishing.
+ReLU activation ensures faster convergence.
+Expected Accuracy: ~99.2%
+
+Configuration 2 (Best for Stability & Generalization)
+Hidden Layers: [32, 64, 128, 256]
+Optimizer: RMSprop
+Learning Rate: 0.0001
+Weight Initialization: Xavier
+Activation Function: ReLU
+Batch Size: 64
+Reasoning:
+
+RMSprop prevents aggressive weight updates and provides smoother convergence.
+Slightly deeper network captures complex patterns while avoiding overfitting.
+Lower learning rate ensures stable weight updates.
+Expected Accuracy: ~99.0%
+
+Configuration 3 (Best for Deeper Networks & Classic Optimization)
+Hidden Layers: [128, 256, 512, 1024, 2048]
+Optimizer: SGD with Momentum
+Learning Rate: 0.001
+Weight Initialization: Random
+Activation Function: Sigmoid
+Batch Size: 16
+Reasoning:
+
+SGD with momentum helps train deep networks while avoiding local minima.
+Sigmoid activation helps with gradient flow in deeper networks, though training may be slower.
+Small batch size provides more generalization but increases training time.
+Expected Accuracy: ~98.5%
+
+
 
 Report on SVHN Feedforward Neural Network Training
 
