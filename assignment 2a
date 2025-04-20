@@ -1,0 +1,133 @@
+import pandas as pd
+import tensorflow as tf
+import numpy as np
+
+def load_and_preprocess_data(file_path):
+    df = pd.read_csv(file_path, sep='\t', header=None)
+    df = df.dropna()  # Remove empty rows
+    return list(zip(df[1], df[0]))  # Latin input and Devanagari output pairs
+
+train_data = load_and_preprocess_data('hi.translit.sampled.train.tsv')
+val_data = load_and_preprocess_data('hi.translit.sampled.dev.tsv')
+
+# Adding start/end tokens to target sequences
+input_texts = [pair[0] for pair in train_data]
+output_texts = ['\t' + pair[1] + '\n' for pair in train_data]
+
+# Character sets
+source_chars = sorted(set(''.join(input_texts)))
+target_chars = sorted(set(''.join(output_texts)))
+
+source_char_index = {char: idx for idx, char in enumerate(source_chars)}
+target_char_index = {char: idx for idx, char in enumerate(target_chars)}
+
+input_max_len = max(len(txt) for txt in input_texts)
+output_max_len = max(len(txt) for txt in output_texts)
+
+encoder_input_array = np.zeros((len(input_texts), input_max_len, len(source_chars)))
+decoder_input_array = np.zeros((len(output_texts), output_max_len, len(target_chars)))
+decoder_output_array = np.zeros((len(output_texts), output_max_len, len(target_chars)))
+
+for idx, (input_seq, output_seq) in enumerate(zip(input_texts, output_texts)):
+    for t, char in enumerate(input_seq):
+        encoder_input_array[idx, t, source_char_index[char]] = 1.0
+    for t, char in enumerate(output_seq):
+        decoder_input_array[idx, t, target_char_index[char]] = 1.0
+        if t > 0:
+            decoder_output_array[idx, t - 1, target_char_index[char]] = 1.0
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, LSTM, Dense
+
+# Encoder
+encoder_inputs_layer = Input(shape=(None, len(source_chars)))
+encoder_lstm_layer = LSTM(256, return_state=True)
+encoder_out, state_h, state_c = encoder_lstm_layer(encoder_inputs_layer)
+encoder_states = [state_h, state_c]
+
+# Decoder
+decoder_inputs_layer = Input(shape=(None, len(target_chars)))
+decoder_lstm_layer = LSTM(256, return_sequences=True, return_state=True)
+decoder_out, _, _ = decoder_lstm_layer(decoder_inputs_layer, initial_state=encoder_states)
+decoder_dense_layer = Dense(len(target_chars), activation='softmax')
+decoder_out = decoder_dense_layer(decoder_out)
+
+model = Model([encoder_inputs_layer, decoder_inputs_layer], decoder_out)
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.summary()
+
+model.fit(
+    [encoder_input_array, decoder_input_array],
+    decoder_output_array,
+    batch_size=64,
+    epochs=50,
+    validation_split=0.2
+)
+
+# Encoder model
+encoder_model = Model(encoder_inputs_layer, encoder_states)
+
+# Decoder model
+decoder_state_input_h = Input(shape=(256,))
+decoder_state_input_c = Input(shape=(256,))
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+decoder_out, state_h, state_c = decoder_lstm_layer(
+    decoder_inputs_layer, initial_state=decoder_states_inputs
+)
+decoder_states = [state_h, state_c]
+decoder_out = decoder_dense_layer(decoder_out)
+
+decoder_model = Model([decoder_inputs_layer] + decoder_states_inputs, [decoder_out] + decoder_states)
+
+reverse_source_char_index = {i: char for char, i in source_char_index.items()}
+reverse_target_char_index = {i: char for char, i in target_char_index.items()}
+
+def generate_transliteration(input_seq):
+    # Encode the input sequence
+    states_value = encoder_model.predict(input_seq)
+
+    # Initialize target sequence with start token
+    target_seq = np.zeros((1, 1, len(target_chars)))
+    target_seq[0, 0, target_char_index['\t']] = 1.0
+
+    result_sentence = ''
+    for _ in range(output_max_len):
+        output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
+
+        sampled_idx = np.argmax(output_tokens[0, -1, :])
+        sampled_char = reverse_target_char_index[sampled_idx]
+        result_sentence += sampled_char
+
+        if sampled_char == '\n':
+            break
+
+        # Update target sequence
+        target_seq = np.zeros((1, 1, len(target_chars)))
+        target_seq[0, 0, sampled_idx] = 1.0
+
+        states_value = [h, c]
+
+    return result_sentence.strip()
+
+for idx in range(10):
+    input_seq = encoder_input_array[idx:idx+1]
+    translated = generate_transliteration(input_seq)
+    print(f"Input: {input_texts[idx]} → Predicted: {translated} | Target: {output_texts[idx]}")
+
+def process_input_text(input_text):
+    encoder_input = np.zeros((1, input_max_len, len(source_chars)))
+    for t, char in enumerate(input_text):
+        if char in source_char_index:
+            encoder_input[0, t, source_char_index[char]] = 1.0
+    return encoder_input
+
+while True:
+    user_input = input("Enter a Latin word (or type 'exit' to quit): ").strip().lower()
+    if user_input == 'exit':
+        break
+
+    encoded_input = process_input_text(user_input)
+    result = generate_transliteration(encoded_input)
+    print(f"Predicted Devanagari: {result}")
