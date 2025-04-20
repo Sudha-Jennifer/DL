@@ -1,0 +1,89 @@
+# Install necessary libraries
+!pip install datasets transformers
+
+import os
+import torch
+import pandas as pd
+from datasets import Dataset
+from transformers import (
+    GPT2Tokenizer,
+    GPT2LMHeadModel,
+    Trainer,
+    TrainingArguments,
+    DataCollatorForLanguageModeling,
+    pipeline
+)
+
+# Disable wandb tracking
+os.environ["WANDB_DISABLED"] = "true"
+
+# Load the dataset (make sure you have lyrics of SOUR in this Excel)
+lyrics_data = pd.read_excel("./Olivia_Rodrigo_SOUR_Lyrics.xlsx")
+lyrics_data = lyrics_data[lyrics_data["LYRICS"].notnull() & lyrics_data["LYRICS"].apply(lambda x: isinstance(x, str) and len(x.strip()) > 0)]
+
+# Create HuggingFace-compatible dataset
+dataset = Dataset.from_dict({"text": lyrics_data["LYRICS"].tolist()})
+
+# Load GPT-2 tokenizer and model
+tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+tokenizer.pad_token = tokenizer.eos_token
+model = GPT2LMHeadModel.from_pretrained("gpt2")
+
+# Tokenize lyrics
+def encode(batch):
+    return tokenizer(batch["text"], truncation=True, padding="max_length", max_length=128)
+
+tokenized = dataset.map(encode, batched=True)
+
+# Data collator
+collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False
+)
+
+# Training settings
+training_args = TrainingArguments(
+    output_dir="./gpt2-oliviarodrigo",
+    per_device_train_batch_size=2,
+    num_train_epochs=3,
+    logging_steps=25,
+    save_steps=200,
+    save_total_limit=1,
+    prediction_loss_only=True,
+    fp16=torch.cuda.is_available(),
+    overwrite_output_dir=True
+)
+
+# Set up Trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized,
+    tokenizer=tokenizer,
+    data_collator=collator
+)
+
+# Train the model
+trainer.train()
+
+# Save model and tokenizer
+trainer.save_model("./gpt2-oliviarodrigo")
+tokenizer.save_pretrained("./gpt2-oliviarodrigo")
+
+# Generate lyrics using prompt
+gen_pipeline = pipeline("text-generation", model="./gpt2-oliviarodrigo", tokenizer=tokenizer)
+
+# Prompts for generation
+olivia_prompts = [
+    "I got my driver's license last week",
+    "Maybe I'm too emotional",
+    "It's brutal out here",
+    "And I just can't imagine how you could be so okay",
+    "God, it's ruthless"
+]
+
+# Generate and print outputs
+for prompt in olivia_prompts:
+    print(f"\nPrompt: {prompt}")
+    generated = gen_pipeline(prompt, max_length=100, num_return_sequences=1)[0]["generated_text"]
+    print(f"Generated Lyrics:\n{generated}")
